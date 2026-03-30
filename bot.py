@@ -11,7 +11,7 @@ import sqlite3
 from datetime import datetime, timedelta
 
 # ========== НАСТРОЙКИ ==========
-TG_TOKEN = 'НОВЫЙ_ТОКЕН_ОТ_BOTFATHER'  # 👈 Замени
+TG_TOKEN = '8347775737:AAFSFwXxse-7c3SsOu4JSTN7jSfdYh4vJa4'  # 👈 Замени
 GROQ_KEY = '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'
 GROQ_URL = "https://api.groq.com/openai/v1/chat/completions"
 
