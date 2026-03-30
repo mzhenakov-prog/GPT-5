@@ -5,90 +5,20 @@ import time
 import random
 import os
 import io
-import json
 from PIL import Image, ImageDraw, ImageFont, ImageFilter, ImageEnhance
-import sqlite3
-from datetime import datetime, timedelta
 
 # ========== НАСТРОЙКИ ==========
-TG_TOKEN = '8347775737:AAFSFwXxse-7c3SsOu4JSTN7jSfdYh4vJa4'  # 👈 Замени
+BOT_TOKEN = '8347775737:AAFSFwXxse-7c3SsOu4JSTN7jSfdYh4vJa4'
 GROQ_KEY = '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'
 GROQ_URL = "https://api.groq.com/openai/v1/chat/completions"
 
-bot = telebot.TeleBot(TG_TOKEN)
-
-# ========== БАЗА ДАННЫХ ==========
-def init_db():
-    conn = sqlite3.connect('users.db')
-    c = conn.cursor()
-    c.execute('''CREATE TABLE IF NOT EXISTS users
-                 (user_id INTEGER PRIMARY KEY, 
-                  username TEXT, 
-                  balance INTEGER DEFAULT 3,
-                  premium INTEGER DEFAULT 0,
-                  last_reset TEXT)''')
-    conn.commit()
-    conn.close()
-
-def get_user(user_id):
-    conn = sqlite3.connect('users.db')
-    c = conn.cursor()
-    c.execute("SELECT balance, premium, last_reset FROM users WHERE user_id = ?", (user_id,))
-    result = c.fetchone()
-    conn.close()
-    
-    if result:
-        balance, premium, last_reset = result
-        # Проверяем сброс лимита
-        if last_reset != datetime.now().strftime("%Y-%m-%d"):
-            balance = 3
-            update_user(user_id, balance, premium)
-        return balance, premium
-    else:
-        add_user(user_id)
-        return 3, 0
-
-def add_user(user_id):
-    conn = sqlite3.connect('users.db')
-    c = conn.cursor()
-    c.execute("INSERT INTO users (user_id, balance, premium, last_reset) VALUES (?, 3, 0, ?)",
-              (user_id, datetime.now().strftime("%Y-%m-%d")))
-    conn.commit()
-    conn.close()
-
-def update_user(user_id, balance, premium):
-    conn = sqlite3.connect('users.db')
-    c = conn.cursor()
-    c.execute("UPDATE users SET balance = ?, premium = ?, last_reset = ? WHERE user_id = ?",
-              (balance, premium, datetime.now().strftime("%Y-%m-%d"), user_id))
-    conn.commit()
-    conn.close()
-
-def use_token(user_id):
-    balance, premium = get_user(user_id)
-    if premium:
-        return True
-    if balance > 0:
-        update_user(user_id, balance - 1, premium)
-        return True
-    return False
+bot = telebot.TeleBot(BOT_TOKEN)
 
 # ========== КНОПКИ ==========
 def main_menu():
     markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
     markup.add("💬 GPT 5.2", "🎨 Создать фото")
-    markup.add("📹 Создать видео", "🍌 Nano Banana")
-    markup.add("💰 Баланс", "❓ Помощь", "💎 Premium")
-    return markup
-
-def photo_models_menu():
-    markup = types.InlineKeyboardMarkup(row_width=2)
-    markup.add(
-        types.InlineKeyboardButton("🎨 GPT Images", callback_data="model_gpt_img"),
-        types.InlineKeyboardButton("🔥 FLUX", callback_data="model_flux"),
-        types.InlineKeyboardButton("🎨 DALL·E 3", callback_data="model_dalle"),
-        types.InlineKeyboardButton("🍌 Nano Banana", callback_data="model_nano")
-    )
+    markup.add("🍌 Nano Banana", "❓ Помощь")
     return markup
 
 # ========== AI ФУНКЦИЯ ==========
@@ -111,13 +41,31 @@ def get_ai_response(message):
     except:
         return "❌ Технические проблемы. Напиши позже."
 
-# ========== ГЕНЕРАЦИЯ ФОТО (симуляция) ==========
-def generate_image(prompt, model):
-    # В реальном боте здесь был бы API к нейросетям
-    # Пока возвращаем заглушку
-    return f"🎨 *{model}* сгенерировал бы картинку по запросу:\n\n*{prompt}*\n\n(в платной версии доступна реальная генерация)"
+# ========== ГЕНЕРАЦИЯ ФОТО ==========
+def generate_image_from_prompt(prompt):
+    """Генерирует описание картинки (бесплатно, без API)"""
+    # Используем AI для описания
+    ai_prompt = f"Опиши подробно, как выглядит: {prompt}. Напиши красочное описание для генерации изображения."
+    headers = {"Authorization": f"Bearer {GROQ_KEY}", "Content-Type": "application/json"}
+    payload = {
+        "model": "llama-3.1-8b-instant",
+        "messages": [
+            {"role": "system", "content": "Ты художник, который создаёт красивые описания для картинок."},
+            {"role": "user", "content": ai_prompt}
+        ],
+        "temperature": 0.9,
+        "max_tokens": 300
+    }
+    try:
+        resp = requests.post(GROQ_URL, json=payload, headers=headers, timeout=20)
+        if resp.status_code == 200:
+            description = resp.json()["choices"][0]["message"]["content"].strip()
+            return f"🎨 *Твой запрос:* {prompt}\n\n✨ *Описание для художника:*\n{description}\n\n(для реальной генерации нужен API Midjourney или DALL·E)"
+        return f"🎨 *Твой запрос:* {prompt}\n\n✨ Представь себе: {prompt} в стиле цифрового искусства, яркие цвета, детализированная композиция."
+    except:
+        return f"🎨 *Твой запрос:* {prompt}\n\n✨ Отличная идея для картинки! (для реальной генерации нужен платный API)"
 
-# ========== NANO BANANA ==========
+# ========== NANO BANANA (обработка фото) ==========
 def apply_nano_banana(image):
     img = image.convert('RGB')
     img = ImageEnhance.Brightness(img).enhance(1.2)
@@ -139,139 +87,93 @@ def process_photo(file_id):
     img = Image.open(io.BytesIO(file))
     return apply_nano_banana(img)
 
-# ========== ОБРАБОТЧИКИ ==========
+# ========== СТАРТ ==========
 @bot.message_handler(commands=['start'])
 def start(message):
-    user_id = message.from_user.id
-    balance, premium = get_user(user_id)
-    welcome = """🤖 *GPT 5.2 + Nano Banana 2*
+    welcome = """🤖 *NanoBanano AI — бесплатный мощный бот!*
 
 *Возможности:*
 💬 GPT 5.2 — отвечаю на любые вопросы
-🎨 Создать фото — 4 модели (GPT Images, FLUX, DALL·E 3, Nano Banana)
-📹 Создать видео — VEO, Sora
-🍌 Nano Banana — обработка фото
+🎨 Создать фото — опиши желаемую картинку
+🍌 Nano Banana — обработаю любое фото
 
-*Лимиты:*
-🎁 3 бесплатных запроса в день
-💎 Premium — безлимит, все модели
+*Как пользоваться:*
+• Нажми кнопку 💬 GPT 5.2 и задай вопрос
+• Нажми 🎨 Создать фото и напиши описание
+• Нажми 🍌 Nano Banana и отправь фото
 
-*Кнопки:*
-💰 Баланс — сколько осталось
-💎 Premium — купить подписку
+*Всё бесплатно!* 🚀
 
-Готов? Пиши!"""
+По вопросам: @avgustc"""
     bot.send_message(message.chat.id, welcome, reply_markup=main_menu(), parse_mode='Markdown')
 
+# ========== GPT 5.2 ==========
 @bot.message_handler(func=lambda msg: msg.text == "💬 GPT 5.2")
 def gpt_mode(message):
     bot.send_message(message.chat.id, "💬 *GPT 5.2* готов! Напиши свой вопрос.", reply_markup=main_menu(), parse_mode='Markdown')
     bot.register_next_step_handler(message, process_gpt)
 
 def process_gpt(message):
-    user_id = message.from_user.id
-    balance, premium = get_user(user_id)
-    
-    if not use_token(user_id):
-        bot.send_message(message.chat.id, "❌ *Лимит исчерпан!*\n\nУ тебя 3 бесплатных запроса в день.\nКупи подписку 💎 Premium для безлимита.", reply_markup=main_menu(), parse_mode='Markdown')
-        return
-    
     bot.send_chat_action(message.chat.id, 'typing')
     answer = get_ai_response(message.text)
     bot.send_message(message.chat.id, answer, reply_markup=main_menu(), parse_mode='Markdown')
 
+# ========== СОЗДАТЬ ФОТО ==========
 @bot.message_handler(func=lambda msg: msg.text == "🎨 Создать фото")
-def photo_menu(message):
-    bot.send_message(message.chat.id, "🎨 *Выбери модель для генерации фото:*", reply_markup=photo_models_menu(), parse_mode='Markdown')
-    bot.register_next_step_handler(message, process_photo_prompt)
+def create_photo(message):
+    bot.send_message(message.chat.id, "🎨 *Напиши описание картинки, которую хочешь создать*\n\nНапример: *киберпанк кот в неоне* или *закат на море с пальмами*", reply_markup=main_menu(), parse_mode='Markdown')
+    bot.register_next_step_handler(message, process_photo_generation)
 
-def process_photo_prompt(message):
-    user_id = message.from_user.id
-    balance, premium = get_user(user_id)
-    
-    if not use_token(user_id):
-        bot.send_message(message.chat.id, "❌ *Лимит исчерпан!*\n\nКупи подписку 💎 Premium.", reply_markup=main_menu(), parse_mode='Markdown')
-        return
-    
-    bot.send_message(message.chat.id, "🎨 *Напиши описание картинки:*", parse_mode='Markdown')
-    bot.register_next_step_handler(message, lambda m: generate_and_send_photo(m, message.text))
-
-def generate_and_send_photo(message, model):
-    result = generate_image(message.text, model)
+def process_photo_generation(message):
+    bot.send_chat_action(message.chat.id, 'typing')
+    result = generate_image_from_prompt(message.text)
     bot.send_message(message.chat.id, result, reply_markup=main_menu(), parse_mode='Markdown')
 
+# ========== NANO BANANA ==========
 @bot.message_handler(func=lambda msg: msg.text == "🍌 Nano Banana")
 def nano_mode(message):
-    bot.send_message(message.chat.id, "🍌 *Nano Banana* готов! Отправь фото для обработки.", reply_markup=main_menu(), parse_mode='Markdown')
+    bot.send_message(message.chat.id, "🍌 *Nano Banana* готов! Отправь мне фото, и я обработаю его.", reply_markup=main_menu(), parse_mode='Markdown')
 
 @bot.message_handler(content_types=['photo'])
 def handle_photo(message):
-    if message.text == "🍌 Nano Banana":
-        photo = message.photo[-1]
-        status_msg = bot.send_message(message.chat.id, "🍌 *Обрабатываю фото...*", parse_mode='Markdown')
-        
-        try:
-            processed = process_photo(photo.file_id)
-            output = io.BytesIO()
-            processed.save(output, format='JPEG')
-            output.seek(0)
-            bot.send_photo(message.chat.id, output, caption="✨ *Обработано Nano Banana!*", parse_mode='Markdown')
-            bot.delete_message(message.chat.id, status_msg.message_id)
-        except Exception as e:
-            bot.edit_message_text(f"❌ *Ошибка:* {e}", message.chat.id, status_msg.message_id, parse_mode='Markdown')
-    else:
-        bot.send_message(message.chat.id, "💬 *GPT 5.2:* напиши текст, а не фото!", reply_markup=main_menu(), parse_mode='Markdown')
+    photo = message.photo[-1]
+    status_msg = bot.send_message(message.chat.id, "🍌 *Обрабатываю фото...*", parse_mode='Markdown')
+    
+    try:
+        processed = process_photo(photo.file_id)
+        output = io.BytesIO()
+        processed.save(output, format='JPEG')
+        output.seek(0)
+        bot.send_photo(message.chat.id, output, caption="✨ *Обработано Nano Banana!*", parse_mode='Markdown')
+        bot.delete_message(message.chat.id, status_msg.message_id)
+    except Exception as e:
+        bot.edit_message_text(f"❌ *Ошибка:* {e}", message.chat.id, status_msg.message_id, parse_mode='Markdown')
 
-@bot.message_handler(func=lambda msg: msg.text == "💰 Баланс")
-def balance_handler(message):
-    user_id = message.from_user.id
-    balance, premium = get_user(user_id)
-    if premium:
-        text = "💎 *Premium* — безлимит! 🚀"
-    else:
-        text = f"💰 *Баланс:* {balance} из 3 запросов сегодня\n\n💎 Купи Premium за Telegram Stars — безлимит!"
-    bot.send_message(message.chat.id, text, reply_markup=main_menu(), parse_mode='Markdown')
-
-@bot.message_handler(func=lambda msg: msg.text == "💎 Premium")
-def premium_handler(message):
-    text = """💎 *Premium подписка*
-
-*Что даёт:*
-✅ Безлимитные запросы
-✅ Все модели AI
-✅ Приоритетная обработка
-✅ Генерация видео
-
-*Стоимость:* 100 Telegram Stars / месяц
-
-*Как купить:* нажми кнопку ниже
-
-[💎 Купить Premium](https://t.me/BotFather?start=premium)"""
-    bot.send_message(message.chat.id, text, reply_markup=main_menu(), parse_mode='Markdown')
-
+# ========== ПОМОЩЬ ==========
 @bot.message_handler(func=lambda msg: msg.text == "❓ Помощь")
 def help_handler(message):
-    help_text = """🤖 *GPT 5.2 + Nano Banana 2*
+    help_text = """🤖 *NanoBanano AI — бесплатный бот*
 
-*Режимы:*
-💬 GPT 5.2 — умный AI-ассистент
-🎨 Создать фото — 4 модели:
-   • GPT Images — сложные инструкции
-   • FLUX — динамичные картинки
-   • DALL·E 3 — точное следование тексту
-   • Nano Banana — стилизация
-📹 Создать видео — VEO, Sora
-🍌 Nano Banana — обработка фото
+*Возможности:*
 
-*Лимиты:*
-🎁 3 бесплатных запроса/день
-💎 Premium — безлимит
+💬 *GPT 5.2*
+Просто задай любой вопрос — AI ответит
 
-*По вопросам:* @avgustc"""
+🎨 *Создать фото*
+Напиши описание картинки — я создам детальное описание для художника
+
+🍌 *Nano Banana*
+Отправь фото — я обработаю:
+• Увеличу яркость и контраст
+• Добавлю насыщенность
+• Наложу фирменный стикер
+
+*Всё бесплатно!* 🚀
+
+По вопросам: @avgustc"""
     bot.send_message(message.chat.id, help_text, reply_markup=main_menu(), parse_mode='Markdown')
 
 # ========== ЗАПУСК ==========
 if __name__ == '__main__':
-    init_db()
-    print("🤖 GPT 5.2 + Nano Banana 2 запущен!")
+    print("🤖 NanoBanano AI (бесплатная версия) запущен!")
     bot.polling(none_stop=True)
